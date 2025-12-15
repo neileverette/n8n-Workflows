@@ -1,0 +1,269 @@
+{
+  "name": "Claude - Document Extraction to Sheets",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "upload-document",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-node",
+      "name": "Upload Document Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 380],
+      "webhookId": "claude-doc-upload"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "options": {}
+      },
+      "id": "pdf-to-text",
+      "name": "PDF to Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [460, 380]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "doc-content",
+              "name": "documentContent",
+              "value": "={{ $json.data }}",
+              "type": "string"
+            },
+            {
+              "id": "upload-time",
+              "name": "uploadTimestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "doc-length",
+              "name": "contentLength",
+              "value": "={{ $json.data.length }}",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "prepare-content",
+      "name": "Prepare Content",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [680, 380]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "modelId": "gemini-1.5-pro-latest",
+        "prompt": "=Analyze this document thoroughly and extract all relevant information.\n\nDocument Text:\n{{ $json.documentContent }}\n\nExtract the following information in JSON format:\n{\n  \"title\": \"The main title or subject of the document\",\n  \"documentType\": \"Type of document (e.g., invoice, report, letter, contract)\",\n  \"date\": \"Primary date mentioned (ISO format if possible)\",\n  \"author\": \"Author or sender name\",\n  \"recipient\": \"Recipient or addressee if applicable\",\n  \"summary\": \"Comprehensive 2-3 sentence summary of main points\",\n  \"keyTopics\": [\"List\", \"of\", \"main\", \"topics\"],\n  \"actionItems\": [\"List of action items or next steps\"],\n  \"importantDates\": [\"Any deadlines or important dates\"],\n  \"financialInfo\": \"Any monetary amounts, budgets, or financial data\",\n  \"contacts\": [\"Names, emails, or phone numbers mentioned\"],\n  \"confidence\": \"High/Medium/Low - your confidence in the extraction accuracy\"\n}\n\nProvide accurate extraction. If a field is not applicable, use null.",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 2048,
+          "topP": 0.95
+        }
+      },
+      "id": "gemini-analysis",
+      "name": "Gemini - Analyze Document",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1.1,
+      "position": [900, 380],
+      "credentials": {
+        "googleGeminiApi": {
+          "id": "YOUR_GEMINI_API_CREDENTIAL_ID",
+          "name": "Gemini API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini response and structure data\nlet extractedData;\nconst geminiResponse = $input.item.json.text || $input.item.json.response || $input.item.json.message;\n\ntry {\n  // Try to parse JSON from response\n  const jsonMatch = geminiResponse.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    extractedData = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n  \n  // Ensure all required fields exist\n  const structuredData = {\n    documentTitle: extractedData.title || 'Untitled',\n    documentType: extractedData.documentType || 'Unknown',\n    primaryDate: extractedData.date || new Date().toISOString().split('T')[0],\n    author: extractedData.author || 'N/A',\n    recipient: extractedData.recipient || 'N/A',\n    summary: extractedData.summary || 'No summary available',\n    keyTopics: Array.isArray(extractedData.keyTopics) \n      ? extractedData.keyTopics.join(', ') \n      : (extractedData.keyTopics || 'None'),\n    actionItems: Array.isArray(extractedData.actionItems)\n      ? extractedData.actionItems.join(' | ')\n      : (extractedData.actionItems || 'None'),\n    importantDates: Array.isArray(extractedData.importantDates)\n      ? extractedData.importantDates.join(', ')\n      : (extractedData.importantDates || 'None'),\n    financialInfo: extractedData.financialInfo || 'None',\n    contacts: Array.isArray(extractedData.contacts)\n      ? extractedData.contacts.join(', ')\n      : (extractedData.contacts || 'None'),\n    confidence: extractedData.confidence || 'Medium',\n    processedTimestamp: new Date().toISOString(),\n    contentLength: $('Prepare Content').item.json.contentLength,\n    status: 'Success'\n  };\n  \n  return { json: structuredData };\n  \n} catch (error) {\n  // Error handling - return safe fallback data\n  return {\n    json: {\n      documentTitle: 'Processing Error',\n      documentType: 'Error',\n      primaryDate: new Date().toISOString().split('T')[0],\n      author: 'N/A',\n      recipient: 'N/A',\n      summary: `Error: ${error.message}. Raw response: ${geminiResponse.substring(0, 100)}`,\n      keyTopics: 'N/A',\n      actionItems: 'N/A',\n      importantDates: 'N/A',\n      financialInfo: 'N/A',\n      contacts: 'N/A',\n      confidence: 'N/A',\n      processedTimestamp: new Date().toISOString(),\n      contentLength: 0,\n      status: 'Error',\n      errorDetails: error.message\n    }\n  };\n}"
+      },
+      "id": "parse-and-structure",
+      "name": "Parse & Structure Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 380]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SPREADSHEET_ID",
+          "mode": "id",
+          "cachedResultName": "Document Extraction Results"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Title": "={{ $json.documentTitle }}",
+            "Type": "={{ $json.documentType }}",
+            "Date": "={{ $json.primaryDate }}",
+            "Author": "={{ $json.author }}",
+            "Recipient": "={{ $json.recipient }}",
+            "Summary": "={{ $json.summary }}",
+            "Topics": "={{ $json.keyTopics }}",
+            "Action Items": "={{ $json.actionItems }}",
+            "Important Dates": "={{ $json.importantDates }}",
+            "Financial Info": "={{ $json.financialInfo }}",
+            "Contacts": "={{ $json.contacts }}",
+            "Confidence": "={{ $json.confidence }}",
+            "Processed At": "={{ $json.processedTimestamp }}",
+            "Status": "={{ $json.status }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "append-to-sheets",
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1340, 380],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_OAUTH_ID",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Document processed successfully\",\n  \"data\": {\n    \"title\": \"{{ $('Parse & Structure Data').item.json.documentTitle }}\",\n    \"status\": \"{{ $('Parse & Structure Data').item.json.status }}\",\n    \"processedAt\": \"{{ $('Parse & Structure Data').item.json.processedTimestamp }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"message\": \"Document processing failed\",\n  \"error\": \"{{ $json.error || 'Unknown error occurred' }}\"\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 580]
+    }
+  ],
+  "connections": {
+    "Upload Document Webhook": {
+      "main": [
+        [
+          {
+            "node": "PDF to Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDF to Text": {
+      "main": [
+        [
+          {
+            "node": "Prepare Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Content": {
+      "main": [
+        [
+          {
+            "node": "Gemini - Analyze Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - Analyze Document": {
+      "main": [
+        [
+          {
+            "node": "Parse & Structure Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Structure Data": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "doc-processing",
+      "name": "Document Processing"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-12-15T00:00:00.000Z",
+  "versionId": "2"
+}
