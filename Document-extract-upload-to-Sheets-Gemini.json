@@ -1,100 +1,180 @@
 {
-  "name": "Document Abstraction to Google Sheets",
+  "name": "Document Extraction to Google Sheets",
   "nodes": [
     {
-      "parameters": {},
-      "name": "Start",
-      "type": "n8n-nodes-base.start",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "document-upload",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook - Document Upload",
+      "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "executeOnce": true,
-      "uniqueIdentifier": "3a0050d4-726e-443b-81d0-a92c10b71946"
+      "position": [250, 300],
+      "webhookId": "document-upload-webhook"
     },
     {
       "parameters": {
-        "operation": "read",
-        "filePath": "/path/to/your/document/report.pdf",
-        "options": {}
+        "mode": "jsonToBinary",
+        "options": {
+          "fileName": "={{ $json.body.filename || 'document.pdf' }}",
+          "mimeType": "={{ $json.body.mimeType || 'application/pdf' }}"
+        }
       },
-      "name": "Read Document",
-      "type": "n8n-nodes-base.readBinaryFile",
+      "id": "extract-binary",
+      "name": "Extract Binary File",
+      "type": "n8n-nodes-base.moveBinaryData",
       "typeVersion": 1,
-      "executeOnce": false,
-      "alwaysContinue": false,
-      "uniqueIdentifier": "63a8e329-3733-4f93-b51f-5e367469a842",
-      "settings": {
-        "saveDataImage": true
-      }
+      "position": [450, 300]
     },
     {
       "parameters": {
-        "llmProvider": "openai",
-        "model": "gpt-4o",
-        "prompt": {
-          "type": "chat",
-          "systemMessage": "You are an expert document abstractor. Your task is to analyze the provided document content and extract specific information. You must only respond with a JSON object that contains the extracted fields, using the keys specified below. If a value is not found, use 'N/A'.",
-          "userMessage": "From the following document content, please extract the 'Document Title', 'Date Issued', and 'Primary Contact Name'. Return the result as a JSON object.\n\nDOCUMENT CONTENT:\n{{ $json.data }}",
-          "responseFormat": "json"
-        },
         "options": {}
       },
-      "name": "Extract Key Data",
-      "type": "n8n-nodes-base.llm",
+      "id": "extract-text",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
-      "executeOnce": false,
-      "alwaysContinue": false,
-      "uniqueIdentifier": "180295ef-9310-4828-b80c-7b24345239a2",
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "modelId": "gemini-1.5-pro",
+        "prompt": "=You are an expert document analyzer. Analyze the following document and extract key information.\n\nExtract these fields:\n- Document Title\n- Date (any date mentioned in the document)\n- Author/Contact Name\n- Summary (brief 1-2 sentence summary)\n- Key Topics (comma-separated list)\n- Action Items (if any)\n\nDocument Content:\n{{ $json.data }}\n\nReturn your response as a JSON object with these exact keys: title, date, author, summary, topics, action_items",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1000
+        }
+      },
+      "id": "ai-extract",
+      "name": "AI - Extract Key Information",
+      "type": "n8n-nodes-base.googleGemini",
+      "typeVersion": 1,
+      "position": [850, 300],
       "credentials": {
-        "llmProviderApi": {
-          "id": "YOUR-LLM-CREDENTIAL-ID", 
-          "name": "My LLM Account"
+        "googleGeminiApi": {
+          "id": "YOUR_GEMINI_CREDENTIAL_ID",
+          "name": "Google Gemini API"
         }
       }
     },
     {
       "parameters": {
+        "jsCode": "// Parse the AI response and structure it for Google Sheets\nconst aiResponse = $input.item.json.text || $input.item.json.response;\n\ntry {\n  // Try to parse JSON response from AI\n  const extracted = JSON.parse(aiResponse);\n  \n  return {\n    json: {\n      title: extracted.title || 'N/A',\n      date: extracted.date || 'N/A',\n      author: extracted.author || 'N/A',\n      summary: extracted.summary || 'N/A',\n      topics: extracted.topics || 'N/A',\n      action_items: extracted.action_items || 'N/A',\n      processed_date: new Date().toISOString()\n    }\n  };\n} catch (error) {\n  // If parsing fails, return the raw response\n  return {\n    json: {\n      title: 'Parse Error',\n      date: 'N/A',\n      author: 'N/A',\n      summary: aiResponse.substring(0, 200),\n      topics: 'N/A',\n      action_items: 'N/A',\n      processed_date: new Date().toISOString(),\n      error: error.message\n    }\n  };\n}"
+      },
+      "id": "format-data",
+      "name": "Format Data for Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
         "operation": "append",
-        "spreadsheetId": "YOUR-SPREADSHEET-ID", 
-        "sheetName": "Sheet1",
-        "dataToAppend": {
-          "values": [
-            {
-              "Document Title": "={{ $json.choices[0].message.content['Document Title'] }}",
-              "Issue Date": "={{ $json.choices[0].message.content['Date Issued'] }}",
-              "Contact": "={{ $json.choices[0].message.content['Primary Contact Name'] }}"
-            }
-          ]
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Title": "={{ $json.title }}",
+            "Date": "={{ $json.date }}",
+            "Author": "={{ $json.author }}",
+            "Summary": "={{ $json.summary }}",
+            "Topics": "={{ $json.topics }}",
+            "Action Items": "={{ $json.action_items }}",
+            "Processed": "={{ $json.processed_date }}"
+          }
         },
         "options": {}
       },
-      "name": "Append to Google Sheet",
+      "id": "append-sheets",
+      "name": "Append to Google Sheets",
       "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 1,
-      "executeOnce": false,
-      "alwaysContinue": false,
-      "uniqueIdentifier": "469113ef-d238-4034-9279-d5c64c8c7344",
+      "typeVersion": 4,
+      "position": [1250, 300],
       "credentials": {
-        "googleSheetsApi": {
-          "id": "YOUR-GOOGLE-SHEETS-CREDENTIAL-ID", 
-          "name": "My Google Sheets Account"
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets Account"
         }
       }
     }
   ],
   "connections": {
-    "Start": [
-      [
-        "Read Document"
+    "Webhook - Document Upload": {
+      "main": [
+        [
+          {
+            "node": "Extract Binary File",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
-    ],
-    "Read Document": [
-      [
-        "Extract Key Data"
+    },
+    "Extract Binary File": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
-    ],
-    "Extract Key Data": [
-      [
-        "Append to Google Sheet"
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "AI - Extract Key Information",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
-    ]
-  }
+    },
+    "AI - Extract Key Information": {
+      "main": [
+        [
+          {
+            "node": "Format Data for Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Data for Sheets": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-15T00:00:00.000Z",
+  "versionId": "1"
 }
