@@ -1,0 +1,100 @@
+{
+  "name": "Document Abstraction to Google Sheets",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "executeOnce": true,
+      "uniqueIdentifier": "3a0050d4-726e-443b-81d0-a92c10b71946"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "filePath": "/path/to/your/document/report.pdf",
+        "options": {}
+      },
+      "name": "Read Document",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "executeOnce": false,
+      "alwaysContinue": false,
+      "uniqueIdentifier": "63a8e329-3733-4f93-b51f-5e367469a842",
+      "settings": {
+        "saveDataImage": true
+      }
+    },
+    {
+      "parameters": {
+        "llmProvider": "openai",
+        "model": "gpt-4o",
+        "prompt": {
+          "type": "chat",
+          "systemMessage": "You are an expert document abstractor. Your task is to analyze the provided document content and extract specific information. You must only respond with a JSON object that contains the extracted fields, using the keys specified below. If a value is not found, use 'N/A'.",
+          "userMessage": "From the following document content, please extract the 'Document Title', 'Date Issued', and 'Primary Contact Name'. Return the result as a JSON object.\n\nDOCUMENT CONTENT:\n{{ $json.data }}",
+          "responseFormat": "json"
+        },
+        "options": {}
+      },
+      "name": "Extract Key Data",
+      "type": "n8n-nodes-base.llm",
+      "typeVersion": 1,
+      "executeOnce": false,
+      "alwaysContinue": false,
+      "uniqueIdentifier": "180295ef-9310-4828-b80c-7b24345239a2",
+      "credentials": {
+        "llmProviderApi": {
+          "id": "YOUR-LLM-CREDENTIAL-ID", 
+          "name": "My LLM Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "spreadsheetId": "YOUR-SPREADSHEET-ID", 
+        "sheetName": "Sheet1",
+        "dataToAppend": {
+          "values": [
+            {
+              "Document Title": "={{ $json.choices[0].message.content['Document Title'] }}",
+              "Issue Date": "={{ $json.choices[0].message.content['Date Issued'] }}",
+              "Contact": "={{ $json.choices[0].message.content['Primary Contact Name'] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Append to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "executeOnce": false,
+      "alwaysContinue": false,
+      "uniqueIdentifier": "469113ef-d238-4034-9279-d5c64c8c7344",
+      "credentials": {
+        "googleSheetsApi": {
+          "id": "YOUR-GOOGLE-SHEETS-CREDENTIAL-ID", 
+          "name": "My Google Sheets Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": [
+      [
+        "Read Document"
+      ]
+    ],
+    "Read Document": [
+      [
+        "Extract Key Data"
+      ]
+    ],
+    "Extract Key Data": [
+      [
+        "Append to Google Sheet"
+      ]
+    ]
+  }
+}
